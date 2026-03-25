@@ -1,0 +1,73 @@
+---
+# All sysctl tasks write to /etc/sysctl.d/99-ansible.conf (persisted across reboots)
+# and set reload=true so the value takes effect immediately without a reboot.
+# The ansible.posix.sysctl module is idempotent — it only changes the file
+# and reloads when the current kernel value differs from the desired value.
+
+# Raises the maximum number of memory-mapped areas a process can have.
+# Elasticsearch requires vm.max_map_count >= 262144. Without this, ES fails
+# to start with: "max virtual memory areas vm.max_map_count [...] is too low".
+- name: sysctl | vm.max_map_count (required by Elasticsearch)
+  ansible.posix.sysctl:
+    name: vm.max_map_count
+    value: "{{ vm_max_map_count }}"
+    state: present
+    sysctl_file: /etc/sysctl.d/99-ansible.conf
+    reload: true
+  tags: [common, sysctl]
+
+# Sets the system-wide maximum number of open file descriptors (kernel-level).
+# Works together with the ulimits in limits.conf to allow Elasticsearch, Kafka,
+# and Nuxeo to open large numbers of files and network sockets simultaneously.
+- name: sysctl | fs.file-max
+  ansible.posix.sysctl:
+    name: fs.file-max
+    value: "{{ fs_file_max }}"
+    state: present
+    sysctl_file: /etc/sysctl.d/99-ansible.conf
+    reload: true
+  tags: [common, sysctl]
+
+# Sets the maximum number of connections that can be queued for acceptance
+# by a listening socket. Low values cause connection drops under burst traffic.
+# Nuxeo and HAProxy both benefit from a high somaxconn value.
+- name: sysctl | net.core.somaxconn
+  ansible.posix.sysctl:
+    name: net.core.somaxconn
+    value: "{{ net_core_somaxconn }}"
+    state: present
+    sysctl_file: /etc/sysctl.d/99-ansible.conf
+    reload: true
+  tags: [common, sysctl]
+
+# Sets the size of the SYN backlog queue — the number of half-open TCP
+# connections the kernel keeps before dropping new ones. Raising this value
+# protects against SYN flood attacks and handles legitimate bursts of
+# simultaneous inbound connections to HAProxy or Nuxeo.
+- name: sysctl | net.ipv4.tcp_max_syn_backlog
+  ansible.posix.sysctl:
+    name: net.ipv4.tcp_max_syn_backlog
+    value: "{{ net_ipv4_tcp_max_syn_backlog }}"
+    state: present
+    sysctl_file: /etc/sysctl.d/99-ansible.conf
+    reload: true
+  tags: [common, sysctl]
+
+# Disables IPv6 on all interfaces (all, default, and loopback) when
+# net_disable_ipv6=true. This simplifies firewall rules, reduces attack surface,
+# and avoids unexpected IPv6 bindings in services like Elasticsearch or etcd
+# that may listen on :: by default.
+# Skipped by default (net_disable_ipv6: false).
+- name: sysctl | disable IPv6 (all interfaces)
+  ansible.posix.sysctl:
+    name: "{{ item }}"
+    value: "1"
+    state: present
+    sysctl_file: /etc/sysctl.d/99-ansible.conf
+    reload: true
+  loop:
+    - net.ipv6.conf.all.disable_ipv6
+    - net.ipv6.conf.default.disable_ipv6
+    - net.ipv6.conf.lo.disable_ipv6
+  when: net_disable_ipv6 | bool
+  tags: [common, sysctl]

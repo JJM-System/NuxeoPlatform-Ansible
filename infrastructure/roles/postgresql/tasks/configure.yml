@@ -1,0 +1,151 @@
+---
+# Open PostgreSQL client port in UFW so Nuxeo (app_nodes) can connect to
+# the Patroni leader. Also open the Patroni REST API port so patronictl
+# and Ansible health checks can query cluster state from any node.
+- name: configure | ufw — allow PostgreSQL port {{ postgresql_port }}
+  community.general.ufw:
+    rule: allow
+    port: "{{ postgresql_port | string }}"
+    proto: tcp
+    comment: "PostgreSQL"
+  when: postgresql_ufw_enabled | bool
+  tags: [postgresql, configure]
+
+- name: configure | ufw — allow Patroni REST API port {{ patroni_restapi_port }}
+  community.general.ufw:
+    rule: allow
+    port: "{{ patroni_restapi_port | string }}"
+    proto: tcp
+    comment: "Patroni REST API"
+  when: postgresql_ufw_enabled | bool
+  tags: [postgresql, configure]
+
+# Deploy the per-node Patroni configuration file. Each node gets its own
+# advertise addresses derived from ansible_host (inventory IP). The
+# initial-cluster bootstrap section lists all 3 db_nodes dynamically via
+# a Jinja2 loop over groups['db_nodes'] — same pattern as etcd.conf.
+- name: configure | deploy /etc/patroni/patroni.yml
+  ansible.builtin.template:
+    src: patroni.yml.j2
+    dest: "{{ patroni_config_dir }}/patroni.yml"
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: "0640"
+    backup: true
+  notify: reload patroni
+  tags: [postgresql, configure]
+
+# Deploy pg_hba.conf — controls client authentication rules.
+# Patroni renders this file on each node via its bootstrap.pg_hba section,
+# but we also manage it here so changes can be pushed without a full
+# cluster reinitialisation.
+- name: configure | deploy pg_hba.conf template
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "{{ postgresql_config_dir }}/pg_hba.conf"
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: "0640"
+    backup: true
+  tags: [postgresql, configure]
+
+# Enable and start the Patroni service. On the very first run Patroni will:
+#   1. Run initdb to initialise the data directory (primary only)
+#   2. Create the replication user
+#   3. Create the superuser password
+#   4. Register itself in etcd and become leader
+#   Replicas: connect to the primary, run pg_basebackup, then stream WAL.
+# All 3 nodes must start simultaneously — the play uses serial: "100%".
+- name: configure | enable and start Patroni
+  ansible.builtin.systemd:
+    name: patroni
+    state: started
+    enabled: true
+  tags: [postgresql, configure]
+
+# Wait for Patroni to finish bootstrap. The REST API port (8008) opens almost
+# immediately when the process starts, but /health returns HTTP 200 only after
+# PostgreSQL has completed initdb and is accepting connections. We retry every
+# 10 s for up to 5 minutes to cover slow VMs and the initial leader election.
+- name: configure | wait for Patroni to report healthy (/health returns 200)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ patroni_restapi_port }}/health"
+    method: GET
+    status_code: 200
+    timeout: 5
+  register: _patroni_health_wait
+  until: _patroni_health_wait.status == 200
+  retries: 30
+  delay: 10
+  changed_when: false
+  tags: [postgresql, configure]
+
+# Identify which node is the Patroni primary by querying /primary.
+# Returns HTTP 200 on the Leader, HTTP 503 on replicas.
+# This is used to target DB/user creation at the correct node.
+- name: configure | check if this node is the Patroni primary
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ patroni_restapi_port }}/primary"
+    method: GET
+    status_code: [200, 503]
+    timeout: 5
+    return_content: false
+  register: _patroni_is_primary
+  changed_when: false
+  tags: [postgresql, configure]
+
+# The REST API (8008) comes up before PostgreSQL finishes opening port 5432.
+# Wait for 5432 on the primary node before attempting DB/user creation.
+- name: configure | wait for PostgreSQL port 5432 on primary
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ postgresql_port }}"
+    timeout: 60
+    state: started
+  when: _patroni_is_primary.status == 200
+  tags: [postgresql, configure]
+
+# Run DB/user creation only on the primary (where writes are accepted).
+# The 'when' condition replaces run_once — it naturally runs once since
+# only one node returns HTTP 200 from /primary.
+- name: configure | create Nuxeo database user
+  community.postgresql.postgresql_user:
+    name: "{{ postgresql_nuxeo_user }}"
+    password: "{{ vault_nuxeo_db_password }}"
+    role_attr_flags: NOSUPERUSER,NOCREATEDB,NOCREATEROLE
+    state: present
+    login_host: "127.0.0.1"
+    login_port: "{{ postgresql_port }}"
+    login_user: "{{ postgresql_superuser }}"
+    login_password: "{{ vault_postgresql_password }}"
+  when: _patroni_is_primary.status == 200
+  tags: [postgresql, configure]
+
+- name: configure | create Nuxeo database
+  community.postgresql.postgresql_db:
+    name: "{{ postgresql_nuxeo_db }}"
+    owner: "{{ postgresql_nuxeo_user }}"
+    encoding: UTF8
+    lc_collate: en_US.UTF-8
+    lc_ctype: en_US.UTF-8
+    template: template0
+    state: present
+    login_host: "127.0.0.1"
+    login_port: "{{ postgresql_port }}"
+    login_user: "{{ postgresql_superuser }}"
+    login_password: "{{ vault_postgresql_password }}"
+  when: _patroni_is_primary.status == 200
+  tags: [postgresql, configure]
+
+- name: configure | grant all privileges on Nuxeo database to Nuxeo user
+  community.postgresql.postgresql_privs:
+    database: "{{ postgresql_nuxeo_db }}"
+    privs: ALL
+    type: database
+    role: "{{ postgresql_nuxeo_user }}"
+    login_host: "127.0.0.1"
+    login_port: "{{ postgresql_port }}"
+    login_user: "{{ postgresql_superuser }}"
+    login_password: "{{ vault_postgresql_password }}"
+  when: _patroni_is_primary.status == 200
+  tags: [postgresql, configure]

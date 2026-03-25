@@ -1,0 +1,138 @@
+---
+- name: install | create etcd group
+  ansible.builtin.group:
+    name: "{{ etcd_group }}"
+    system: true
+    state: present
+  tags: [etcd, install]
+
+- name: install | create etcd user
+  ansible.builtin.user:
+    name: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    shell: /usr/sbin/nologin
+    create_home: false
+    system: true
+    state: present
+  tags: [etcd, install]
+
+- name: install | create etcd data directory
+  ansible.builtin.file:
+    path: "{{ etcd_data_dir }}"
+    state: directory
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: "0700"
+  tags: [etcd, install]
+
+- name: install | create etcd config directory
+  ansible.builtin.file:
+    path: "{{ etcd_config_dir }}"
+    state: directory
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: "0750"
+  tags: [etcd, install]
+
+- name: install | check if etcd binary already matches target version
+  ansible.builtin.command:
+    cmd: "{{ etcd_install_dir }}/etcd --version"
+  register: _etcd_installed_version
+  changed_when: false
+  failed_when: false
+  tags: [etcd, install]
+
+- name: install | set fact — needs install
+  ansible.builtin.set_fact:
+    _etcd_needs_install: >-
+      {{
+        _etcd_installed_version.rc != 0 or
+        etcd_version not in _etcd_installed_version.stdout
+      }}
+  tags: [etcd, install]
+
+- name: install | download etcd tarball
+  ansible.builtin.get_url:
+    url: "{{ etcd_download_url }}"
+    dest: "/tmp/etcd-v{{ etcd_version }}-linux-amd64.tar.gz"
+    mode: "0644"
+    timeout: 120
+  when: _etcd_needs_install | bool
+  tags: [etcd, install]
+
+- name: install | extract etcd and etcdctl binaries
+  ansible.builtin.unarchive:
+    src: "/tmp/etcd-v{{ etcd_version }}-linux-amd64.tar.gz"
+    dest: /tmp
+    remote_src: true
+    creates: "/tmp/etcd-v{{ etcd_version }}-linux-amd64/etcd"
+  when: _etcd_needs_install | bool
+  tags: [etcd, install]
+
+- name: install | copy etcd binary to {{ etcd_install_dir }}
+  ansible.builtin.copy:
+    src: "/tmp/etcd-v{{ etcd_version }}-linux-amd64/etcd"
+    dest: "{{ etcd_install_dir }}/etcd"
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+  when: _etcd_needs_install | bool
+  tags: [etcd, install]
+
+- name: install | copy etcdctl binary to {{ etcd_install_dir }}
+  ansible.builtin.copy:
+    src: "/tmp/etcd-v{{ etcd_version }}-linux-amd64/etcdctl"
+    dest: "{{ etcd_install_dir }}/etcdctl"
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+  when: _etcd_needs_install | bool
+  tags: [etcd, install]
+
+- name: install | remove downloaded tarball
+  ansible.builtin.file:
+    path: "/tmp/etcd-v{{ etcd_version }}-linux-amd64.tar.gz"
+    state: absent
+  when: _etcd_needs_install | bool
+  tags: [etcd, install]
+
+- name: install | remove extracted temp directory
+  ansible.builtin.file:
+    path: "/tmp/etcd-v{{ etcd_version }}-linux-amd64"
+    state: absent
+  when: _etcd_needs_install | bool
+  tags: [etcd, install]
+
+- name: install | deploy etcd.env (environment stub)
+  ansible.builtin.copy:
+    dest: "{{ etcd_config_dir }}/etcd.env"
+    content: |
+      # etcd environment overrides — managed by Ansible
+      # Add ETCD_* vars here if needed; loaded by systemd EnvironmentFile
+      ETCDCTL_API=3
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: "0640"
+  tags: [etcd, install]
+
+- name: install | deploy systemd unit file
+  ansible.builtin.template:
+    src: etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart etcd
+  tags: [etcd, install]
+
+# Only enable the unit and reload systemd — do NOT start yet.
+# The service will be started in configure.yml AFTER etcd.conf is deployed.
+# Starting here would fail because the config file does not exist yet.
+- name: install | enable etcd service and reload systemd daemon
+  ansible.builtin.systemd:
+    name: etcd
+    enabled: true
+    daemon_reload: true
+  tags: [etcd, install]

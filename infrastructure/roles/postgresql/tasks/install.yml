@@ -1,0 +1,185 @@
+---
+# Add the official PGDG apt repository key and repo.
+# Only needed when postgresql_use_pgdg is true — distros that ship the
+# required PG version natively (e.g. Ubuntu 25.04 with PG17) can skip this.
+- name: install | add PostgreSQL apt signing key
+  ansible.builtin.get_url:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    dest: /usr/share/keyrings/postgresql.asc
+    mode: "0644"
+    force: false
+  when: postgresql_use_pgdg | bool
+  tags: [postgresql, install]
+
+- name: install | add PostgreSQL apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/usr/share/keyrings/postgresql.asc]
+      https://apt.postgresql.org/pub/repos/apt
+      {{ postgresql_pgdg_codename }}-pgdg main
+    filename: pgdg
+    state: present
+    update_cache: true
+  when: postgresql_use_pgdg | bool
+  tags: [postgresql, install]
+
+# Remove any leftover PGDG repo file from a previous run so apt does not
+# try to install PGDG-built packages (which may have different library
+# requirements than the distro-native PostgreSQL packages).
+- name: install | remove PGDG apt repository (using distro-native packages)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pgdg.list
+    state: absent
+  register: _pgdg_repo_removed
+  when: not (postgresql_use_pgdg | bool)
+  tags: [postgresql, install]
+
+# Refresh apt cache immediately after removing the PGDG repo so the next
+# package install task uses only distro-native packages.
+- name: install | refresh apt cache after removing PGDG repo
+  ansible.builtin.apt:
+    update_cache: true
+  when:
+    - not (postgresql_use_pgdg | bool)
+    - _pgdg_repo_removed is changed
+  tags: [postgresql, install]
+
+# Install PostgreSQL server and client packages.
+# postgresql-{{ version }} pulls in the server; postgresql-client is needed
+# by patronictl and psql for health checks.
+# python3-venv — required to create the Patroni virtual environment.
+# python3-psycopg2 — required by Ansible's community.postgresql modules
+#   (must be the system package, not the one inside the venv).
+# update_cache only when PGDG was NOT added above (PGDG repo task already
+# runs update_cache: true). When using the native distro repo, refresh here.
+- name: install | install PostgreSQL {{ postgresql_version }} packages
+  ansible.builtin.apt:
+    name:
+      - "postgresql-{{ postgresql_version }}"
+      - "postgresql-client-{{ postgresql_version }}"
+      - "postgresql-contrib-{{ postgresql_version }}"
+      - python3-pip
+      - python3-venv
+      - python3-psycopg2
+    state: present
+    update_cache: false
+  tags: [postgresql, install]
+
+# Stop and disable the default postgresql systemd service.
+# Patroni takes full ownership of the PostgreSQL process — if both systemd
+# and Patroni try to manage PG, they will conflict (port already in use).
+- name: install | stop and disable default postgresql service
+  ansible.builtin.systemd:
+    name: "postgresql@{{ postgresql_version }}-main"
+    state: stopped
+    enabled: false
+  failed_when: false   # service may not exist yet on first run
+  tags: [postgresql, install]
+
+- name: install | disable postgresql umbrella service
+  ansible.builtin.systemd:
+    name: postgresql
+    state: stopped
+    enabled: false
+  failed_when: false
+  tags: [postgresql, install]
+
+# Patroni writes patroni.dynamic.json into the data directory after its first
+# successful bootstrap. Its presence means Patroni already owns this cluster —
+# do NOT wipe the data directory on re-runs.
+- name: install | check if Patroni has already bootstrapped this node
+  ansible.builtin.stat:
+    path: "{{ postgresql_data_dir }}/patroni.dynamic.json"
+  register: _patroni_bootstrapped
+  tags: [postgresql, install]
+
+# Wipe the default data directory created by the apt post-install scripts
+# only on the very first run (before Patroni has bootstrapped).
+# Patroni requires the data directory to be EMPTY when it runs initdb.
+- name: install | remove apt-default PostgreSQL data directory (first run only)
+  ansible.builtin.file:
+    path: "{{ postgresql_data_dir }}"
+    state: absent
+  when: not _patroni_bootstrapped.stat.exists
+  tags: [postgresql, install]
+
+# Re-create the data directory as an empty, correctly-owned directory.
+# Patroni runs initdb into this directory during its first bootstrap.
+- name: install | create empty PostgreSQL data directory
+  ansible.builtin.file:
+    path: "{{ postgresql_data_dir }}"
+    state: directory
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: "0700"
+  tags: [postgresql, install]
+
+# Create directories Patroni needs for its own config and log files.
+- name: install | create Patroni config directory
+  ansible.builtin.file:
+    path: "{{ patroni_config_dir }}"
+    state: directory
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: "0750"
+  tags: [postgresql, install]
+
+- name: install | create Patroni log directory
+  ansible.builtin.file:
+    path: "{{ patroni_log_dir }}"
+    state: directory
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: "0750"
+  tags: [postgresql, install]
+
+# Pre-create the log file owned by the postgres user. Without this, systemd
+# creates the file as root when it sets up StandardOutput=append:, and then
+# Patroni's RotatingFileHandler (running as postgres) fails with Permission denied.
+- name: install | pre-create Patroni log file owned by postgres
+  ansible.builtin.file:
+    path: "{{ patroni_log_dir }}/patroni.log"
+    state: touch
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: "0640"
+    modification_time: preserve
+    access_time: preserve
+  tags: [postgresql, install]
+
+# Create a dedicated Python virtual environment for Patroni.
+# Ubuntu 24.10+ enforces PEP 668 which blocks pip installs into the system
+# Python — a venv is the clean solution that avoids that restriction entirely.
+- name: install | create Python virtual environment for Patroni
+  ansible.builtin.command:
+    cmd: python3 -m venv {{ patroni_venv_dir }}
+    creates: "{{ patroni_venv_dir }}/bin/activate"
+  tags: [postgresql, install]
+
+# Install Patroni and its etcd3 driver into the venv. The apt package for
+# Patroni is often outdated and does not include the etcd3 extras.
+- name: install | install Patroni and dependencies into venv
+  ansible.builtin.pip:
+    name: "{{ patroni_pip_packages }}"
+    state: present
+    virtualenv: "{{ patroni_venv_dir }}"
+  tags: [postgresql, install]
+
+# Create the Patroni systemd unit so the OS can manage it as a service.
+# Patroni manages PostgreSQL internally — there is no separate PG unit.
+- name: install | deploy patroni systemd unit file
+  ansible.builtin.template:
+    src: patroni.service.j2
+    dest: /etc/systemd/system/patroni.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: _patroni_service_file
+  notify: restart patroni
+  tags: [postgresql, install]
+
+- name: install | systemd daemon reload
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _patroni_service_file is changed
+  tags: [postgresql, install]

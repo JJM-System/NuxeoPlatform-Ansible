@@ -1,0 +1,19 @@
+---
+# ── Nuxeo ──────────────────────────────────────────────────────────────────────
+nuxeo_install_dir: /opt/nuxeo
+nuxeo_data_dir: /var/lib/nuxeo
+nuxeo_log_dir: /var/log/nuxeo
+nuxeo_version: "2025.0"
+nuxeo_user: nuxeo
+nuxeo_group: nuxeo
+
+# ── MinIO ──────────────────────────────────────────────────────────────────────
+minio_install_dir: /opt/minio
+minio_data_dir: /var/lib/minio/data
+
+# ── HAProxy ────────────────────────────────────────────────────────────────────
+haproxy_stats_user: admin
+
+# ── Keepalived ─────────────────────────────────────────────────────────────────
+keepalived_vrrp_interface: eth1
+keepalived_auth_pass: "{{ vault_keepalived_auth_pass }}"

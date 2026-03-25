@@ -1,0 +1,102 @@
+---
+# Populates ansible_facts.services with the state of all systemd units.
+# Required by the assert tasks below that check whether specific services
+# are in the 'running' state. Must run before any service assertions.
+- name: health_check | gather service facts
+  ansible.builtin.service_facts:
+  tags: [common, health_check, health_check_common]
+
+# Verifies that the chrony.service unit is both present in systemd and
+# currently running. Fails the play immediately if chrony is down — a node
+# with an unsynchronized clock can corrupt etcd consensus timestamps and
+# cause Kafka log offset issues.
+- name: health_check | assert chronyd is active
+  ansible.builtin.assert:
+    that:
+      - "'chrony.service' in ansible_facts.services"
+      - "ansible_facts.services['chrony.service']['state'] == 'running'"
+    fail_msg: "chronyd is NOT running on {{ inventory_hostname }}"
+    success_msg: "chronyd is running"
+  tags: [common, health_check, health_check_common]
+
+# Runs 'java -version' to confirm the JDK binary is on PATH and executable.
+# Java writes its version string to stderr (not stdout), so both streams are
+# captured. changed_when: false marks it as a read-only probe.
+- name: health_check | verify java binary
+  ansible.builtin.command:
+    cmd: java -version
+  register: _hc_java
+  changed_when: false
+  failed_when: _hc_java.rc != 0
+  tags: [common, health_check, health_check_common]
+
+# Checks that the installed Java version string contains the expected major
+# version number (java_version variable, e.g. "21"). Guards against the apt
+# package resolver having silently installed a different JDK version.
+- name: health_check | assert java version matches expectation
+  ansible.builtin.assert:
+    that:
+      - "java_version in (_hc_java.stderr | default(_hc_java.stdout))"
+    fail_msg: >
+      Java {{ java_version }} not found. Got:
+      {{ _hc_java.stderr | default(_hc_java.stdout) }}
+    success_msg: "Java {{ java_version }} confirmed"
+  tags: [common, health_check, health_check_common]
+
+# Reads the live kernel value of vm.max_map_count via sysctl.
+# changed_when: false — reading a sysctl value never modifies system state.
+- name: health_check | read vm.max_map_count
+  ansible.builtin.command:
+    cmd: sysctl -n vm.max_map_count
+  register: _hc_mmap
+  changed_when: false
+  tags: [common, health_check, health_check_common]
+
+# Asserts the live kernel value matches the desired value from defaults.
+# A mismatch means either the sysctl task failed silently or the value
+# was overridden by another process — Elasticsearch will refuse to start.
+- name: health_check | assert vm.max_map_count == {{ vm_max_map_count }}
+  ansible.builtin.assert:
+    that:
+      - "_hc_mmap.stdout | trim | int == vm_max_map_count | int"
+    fail_msg: >
+      vm.max_map_count is {{ _hc_mmap.stdout | trim }},
+      expected {{ vm_max_map_count }}
+    success_msg: "vm.max_map_count = {{ _hc_mmap.stdout | trim }} OK"
+  tags: [common, health_check, health_check_common]
+
+# Reads the live kernel value of fs.file-max.
+- name: health_check | read fs.file-max
+  ansible.builtin.command:
+    cmd: sysctl -n fs.file-max
+  register: _hc_filemax
+  changed_when: false
+  tags: [common, health_check, health_check_common]
+
+# Asserts the live kernel value matches fs_file_max from defaults.
+# A lower value would limit how many file descriptors Elasticsearch and Kafka
+# can open, causing random I/O errors under load.
+- name: health_check | assert fs.file-max == {{ fs_file_max }}
+  ansible.builtin.assert:
+    that:
+      - "_hc_filemax.stdout | trim | int == fs_file_max | int"
+    fail_msg: >
+      fs.file-max is {{ _hc_filemax.stdout | trim }},
+      expected {{ fs_file_max }}
+    success_msg: "fs.file-max = {{ _hc_filemax.stdout | trim }} OK"
+  tags: [common, health_check, health_check_common]
+
+# Uses check_mode (dry-run) to verify the JAVA_HOME line is already present
+# in /etc/environment without modifying the file. If the line is missing,
+# lineinfile would report 'changed' in check mode — that change is treated
+# as a failure, catching environments where the java.yml task was skipped.
+- name: health_check | assert JAVA_HOME is set in /etc/environment
+  ansible.builtin.lineinfile:
+    path: /etc/environment
+    regexp: '^JAVA_HOME='
+    state: present
+    line: 'JAVA_HOME="{{ java_home }}"'
+  check_mode: true
+  register: _hc_javahome
+  failed_when: _hc_javahome is changed
+  tags: [common, health_check, health_check_common]

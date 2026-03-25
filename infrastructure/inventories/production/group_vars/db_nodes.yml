@@ -1,0 +1,22 @@
+---
+# ── Elasticsearch ──────────────────────────────────────────────────────────────
+elasticsearch_heap_size: "4g"          # ~50% of node RAM; tune per hardware
+elasticsearch_cluster_name: nuxeo-es-cluster
+elasticsearch_data_dir: /var/lib/elasticsearch
+elasticsearch_version: "8.x"
+
+# ── Kafka ──────────────────────────────────────────────────────────────────────
+kafka_data_dir: /var/lib/kafka
+kafka_log_retention_hours: 168
+kafka_replication_factor: 3
+kafka_min_insync_replicas: 2
+kafka_heap_opts: "-Xmx2g -Xms2g"
+
+# ── PostgreSQL / Patroni ───────────────────────────────────────────────────────
+postgresql_version: "16"
+postgresql_data_dir: /var/lib/postgresql/16/main
+patroni_scope: nuxeo-patroni
+
+# ── etcd ───────────────────────────────────────────────────────────────────────
+etcd_data_dir: /var/lib/etcd
+etcd_cluster_name: nuxeo-etcd-cluster

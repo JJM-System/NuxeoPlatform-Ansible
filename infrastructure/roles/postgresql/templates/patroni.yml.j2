@@ -1,0 +1,112 @@
+# Managed by Ansible — do not edit manually
+# Role: postgresql | Template: patroni.yml.j2
+# Node: {{ inventory_hostname }}
+
+scope: "{{ patroni_scope }}"
+name: "{{ inventory_hostname }}"
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+log:
+  level: INFO
+  dir: "{{ patroni_log_dir }}"
+  file_size: 25000000    # rotate at 25 MB
+  file_num: 4
+
+# ── etcd DCS ───────────────────────────────────────────────────────────────────
+# Patroni uses etcd3 for leader election and cluster state storage.
+# All 3 etcd endpoints are listed so Patroni can tolerate 1 etcd node failure.
+etcd3:
+  hosts: "{% for host in groups['db_nodes'] %}{{ hostvars[host]['ansible_host'] }}:{{ etcd_client_port }}{% if not loop.last %},{% endif %}{% endfor %}"
+
+# ── REST API ───────────────────────────────────────────────────────────────────
+restapi:
+  listen: "{{ patroni_restapi_listen }}:{{ patroni_restapi_port }}"
+  connect_address: "{{ ansible_host }}:{{ patroni_restapi_port }}"
+  authentication:
+    username: patroni
+    password: "{{ vault_patroni_restapi_password }}"
+
+# ── Bootstrap ──────────────────────────────────────────────────────────────────
+# Executed only once on the node that wins the initial leader election.
+# All other nodes will pg_basebackup from the bootstrapped primary.
+bootstrap:
+  dcs:
+    ttl: {{ patroni_ttl }}
+    loop_wait: {{ patroni_loop_wait }}
+    retry_timeout: {{ patroni_retry_timeout }}
+    maximum_lag_on_failover: {{ patroni_maximum_lag_on_failover }}
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        max_connections: {{ postgresql_max_connections }}
+        shared_buffers: "{{ postgresql_shared_buffers }}"
+        effective_cache_size: "{{ postgresql_effective_cache_size }}"
+        work_mem: "{{ postgresql_work_mem }}"
+        maintenance_work_mem: "{{ postgresql_maintenance_work_mem }}"
+        wal_level: "{{ postgresql_wal_level }}"
+        max_wal_senders: {{ postgresql_max_wal_senders }}
+        max_replication_slots: {{ postgresql_max_replication_slots }}
+        synchronous_commit: "{{ postgresql_synchronous_commit }}"
+        hot_standby: "on"
+        wal_log_hints: "on"          # required for pg_rewind
+        archive_mode: "off"
+        logging_collector: "on"
+        log_directory: "pg_log"
+        log_filename: "postgresql-%Y-%m-%d_%H%M%S.log"
+        log_rotation_size: "100MB"
+
+  # initdb options — run once on the first primary
+  initdb:
+    - encoding: UTF8
+    - data-checksums         # enables block-level checksums for data integrity
+
+  # pg_hba entries written by Patroni during bootstrap
+  pg_hba:
+    - host replication {{ postgresql_replication_user }} 192.168.0.0/16 md5
+    - host replication {{ postgresql_replication_user }} 10.0.0.0/8     md5
+    - host all         all                               127.0.0.1/32    md5
+    - host all         all                               192.168.0.0/16  md5
+    - host all         all                               10.0.0.0/8      md5
+
+  # Users created by Patroni on bootstrap
+  users:
+    {{ postgresql_superuser }}:
+      password: "{{ vault_postgresql_password }}"
+      options:
+        - superuser
+        - createrole
+        - createdb
+    {{ postgresql_replication_user }}:
+      password: "{{ vault_postgresql_replication_password }}"
+      options:
+        - replication
+
+# ── PostgreSQL ─────────────────────────────────────────────────────────────────
+postgresql:
+  listen: "0.0.0.0:{{ postgresql_port }}"
+  connect_address: "{{ ansible_host }}:{{ postgresql_port }}"
+  data_dir: "{{ postgresql_data_dir }}"
+  bin_dir: "/usr/lib/postgresql/{{ postgresql_version }}/bin"
+  config_dir: "{{ postgresql_config_dir }}"
+  pgpass: /tmp/pgpass_patroni   # temp file for replication auth
+
+  authentication:
+    replication:
+      username: "{{ postgresql_replication_user }}"
+      password: "{{ vault_postgresql_replication_password }}"
+    superuser:
+      username: "{{ postgresql_superuser }}"
+      password: "{{ vault_postgresql_password }}"
+    rewind:
+      username: "{{ postgresql_superuser }}"
+      password: "{{ vault_postgresql_password }}"
+
+  # Parameters that can be changed without cluster restart
+  parameters:
+    unix_socket_directories: "{{ postgresql_run_dir }}"
+
+# ── Watchdog ───────────────────────────────────────────────────────────────────
+# Disabled in local Vagrant environment — enable in production for fencing
+watchdog:
+  mode: off

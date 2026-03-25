@@ -1,0 +1,193 @@
+---
+# Post-deploy smoke tests — validates all services after full provisioning
+# Usage:
+#   ansible-playbook playbooks/smoke-test.yml -i inventories/local/hosts.ini
+#   ansible-playbook playbooks/smoke-test.yml -i inventories/local/hosts.ini --tags nuxeo
+
+# ── Connectivity baseline ─────────────────────────────────────────────────────
+- hosts: all_nodes
+  gather_facts: false
+  become: false
+  tags: [smoke, ping]
+  tasks:
+    - name: smoke | ping all nodes
+      ansible.builtin.ping:
+
+# ── Elasticsearch ─────────────────────────────────────────────────────────────
+- hosts: db_nodes
+  gather_facts: false
+  become: false
+  run_once: true
+  tags: [smoke, elasticsearch]
+  tasks:
+    - name: smoke | elasticsearch — GET /_cluster/health
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:{{ elasticsearch_port }}/_cluster/health"
+        method: GET
+        return_content: true
+        status_code: 200
+        timeout: 10
+      register: _es_health
+      tags: [smoke, elasticsearch]
+
+    - name: smoke | elasticsearch — assert cluster status is green
+      ansible.builtin.assert:
+        that:
+          - "_es_health.json.status == 'green'"
+        fail_msg: >-
+          Elasticsearch cluster status is '{{ _es_health.json.status }}',
+          expected 'green'. Check: GET /_cluster/health?pretty
+        success_msg: "Elasticsearch cluster status: green"
+      tags: [smoke, elasticsearch]
+
+# ── Kafka ─────────────────────────────────────────────────────────────────────
+- hosts: db_nodes
+  gather_facts: false
+  become: true
+  run_once: true
+  tags: [smoke, kafka]
+  tasks:
+    - name: smoke | kafka — list brokers via kafka-broker-api-versions.sh
+      ansible.builtin.command:
+        cmd: >-
+          /opt/kafka/bin/kafka-broker-api-versions.sh
+          --bootstrap-server 127.0.0.1:{{ kafka_port }}
+      register: _kafka_brokers
+      changed_when: false
+      failed_when: _kafka_brokers.rc != 0
+      tags: [smoke, kafka]
+
+    - name: smoke | kafka — assert at least 3 brokers responded
+      ansible.builtin.assert:
+        that:
+          - "_kafka_brokers.stdout_lines | select('match', '.*id.*') | list | length >= 1"
+        fail_msg: "Kafka broker check failed: {{ _kafka_brokers.stdout }}"
+        success_msg: "Kafka brokers reachable"
+      tags: [smoke, kafka]
+
+# ── PostgreSQL / Patroni ──────────────────────────────────────────────────────
+- hosts: db_nodes
+  gather_facts: false
+  become: true
+  run_once: true
+  tags: [smoke, postgresql]
+  tasks:
+    - name: smoke | patroni — patronictl list
+      ansible.builtin.command:
+        cmd: patronictl -c /etc/patroni/patroni.yml list
+      register: _patroni_list
+      changed_when: false
+      failed_when: _patroni_list.rc != 0
+      tags: [smoke, postgresql]
+
+    - name: smoke | patroni — assert exactly 1 leader
+      ansible.builtin.assert:
+        that:
+          - "_patroni_list.stdout | regex_findall('Leader') | length == 1"
+        fail_msg: >-
+          No Patroni leader found. Output:
+          {{ _patroni_list.stdout }}
+        success_msg: "Patroni cluster has 1 leader — OK"
+      tags: [smoke, postgresql]
+
+# ── MinIO ─────────────────────────────────────────────────────────────────────
+- hosts: app_nodes
+  gather_facts: false
+  become: true
+  run_once: true
+  tags: [smoke, minio]
+  tasks:
+    - name: smoke | minio — mc admin info
+      ansible.builtin.command:
+        cmd: >-
+          mc admin info local
+          --insecure
+      environment:
+        MC_HOST_local: "http://{{ vault_minio_root_user }}:{{ vault_minio_root_password }}@127.0.0.1:{{ minio_port }}"
+      register: _minio_info
+      changed_when: false
+      failed_when: _minio_info.rc != 0
+      tags: [smoke, minio]
+
+    - name: smoke | minio — assert server is online
+      ansible.builtin.assert:
+        that:
+          - "'online' in _minio_info.stdout"
+        fail_msg: "MinIO server not reporting online: {{ _minio_info.stdout }}"
+        success_msg: "MinIO server online — OK"
+      tags: [smoke, minio]
+
+# ── Nuxeo ─────────────────────────────────────────────────────────────────────
+- hosts: app_nodes
+  gather_facts: false
+  become: false
+  tags: [smoke, nuxeo]
+  tasks:
+    - name: smoke | nuxeo — GET /nuxeo/runningstatus on {{ inventory_hostname }}
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:{{ nuxeo_port }}/nuxeo/runningstatus"
+        method: GET
+        status_code: 200
+        timeout: 15
+        return_content: true
+      register: _nuxeo_status
+      tags: [smoke, nuxeo]
+
+    - name: smoke | nuxeo — assert HTTP 200 and running
+      ansible.builtin.assert:
+        that:
+          - "_nuxeo_status.status == 200"
+        fail_msg: >-
+          Nuxeo on {{ inventory_hostname }} returned HTTP
+          {{ _nuxeo_status.status }}
+        success_msg: "Nuxeo on {{ inventory_hostname }}: HTTP 200 — OK"
+      tags: [smoke, nuxeo]
+
+# ── HAProxy stats ─────────────────────────────────────────────────────────────
+- hosts: app_nodes
+  gather_facts: false
+  become: false
+  run_once: true
+  tags: [smoke, haproxy]
+  tasks:
+    - name: smoke | haproxy — check stats page on port {{ haproxy_stats_port }}
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:{{ haproxy_stats_port }}/stats"
+        method: GET
+        url_username: "{{ haproxy_stats_user }}"
+        url_password: "{{ vault_haproxy_stats_password | default('admin') }}"
+        force_basic_auth: true
+        status_code: 200
+        timeout: 10
+      register: _haproxy_stats
+      tags: [smoke, haproxy]
+
+    - name: smoke | haproxy — assert stats page returned 200
+      ansible.builtin.assert:
+        that:
+          - "_haproxy_stats.status == 200"
+        fail_msg: "HAProxy stats page not accessible: HTTP {{ _haproxy_stats.status }}"
+        success_msg: "HAProxy stats page: HTTP 200 — OK"
+      tags: [smoke, haproxy]
+
+# ── Keepalived VIP ────────────────────────────────────────────────────────────
+- hosts: localhost
+  gather_facts: false
+  become: false
+  tags: [smoke, keepalived]
+  tasks:
+    - name: smoke | keepalived — ping VIP {{ virtual_ip }}
+      ansible.builtin.command:
+        cmd: ping -c 3 -W 2 {{ virtual_ip }}
+      register: _vip_ping
+      changed_when: false
+      failed_when: _vip_ping.rc != 0
+      tags: [smoke, keepalived]
+
+    - name: smoke | keepalived — assert VIP is reachable
+      ansible.builtin.assert:
+        that:
+          - "_vip_ping.rc == 0"
+        fail_msg: "VIP {{ virtual_ip }} is NOT reachable — keepalived may be down"
+        success_msg: "VIP {{ virtual_ip }} is reachable — OK"
+      tags: [smoke, keepalived]

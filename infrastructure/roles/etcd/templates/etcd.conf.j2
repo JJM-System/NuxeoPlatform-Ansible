@@ -1,0 +1,35 @@
+# Managed by Ansible — do not edit manually
+# Role: etcd | Template: etcd.conf.j2
+# Node: {{ inventory_hostname }}
+
+# ── Member ─────────────────────────────────────────────────────────────────────
+name: "{{ inventory_hostname }}"
+data-dir: "{{ etcd_data_dir }}"
+
+# ── Peer communication ─────────────────────────────────────────────────────────
+listen-peer-urls: "http://0.0.0.0:{{ etcd_peer_port }}"
+initial-advertise-peer-urls: "http://{{ ansible_host }}:{{ etcd_peer_port }}"
+
+# ── Client communication ───────────────────────────────────────────────────────
+listen-client-urls: "http://0.0.0.0:{{ etcd_client_port }}"
+advertise-client-urls: "http://{{ ansible_host }}:{{ etcd_client_port }}"
+
+# ── Cluster bootstrap ──────────────────────────────────────────────────────────
+initial-cluster-token: "{{ etcd_initial_cluster_token }}"
+initial-cluster-state: "{{ etcd_initial_cluster_state }}"
+initial-cluster: "{% for host in groups['db_nodes'] %}{{ host }}=http://{{ hostvars[host]['ansible_host'] }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}"
+
+# ── Compaction & snapshots ─────────────────────────────────────────────────────
+auto-compaction-mode: periodic
+auto-compaction-retention: "{{ etcd_auto_compaction_retention }}"
+snapshot-count: {{ etcd_snapshot_count }}
+
+# ── Performance tuning ─────────────────────────────────────────────────────────
+heartbeat-interval: {{ etcd_heartbeat_interval }}
+election-timeout: {{ etcd_election_timeout }}
+quota-backend-bytes: {{ etcd_quota_backend_bytes }}
+
+# ── Compatibility & logging ────────────────────────────────────────────────────
+enable-v2: false
+logger: zap
+log-level: info

@@ -1,0 +1,32 @@
+# Managed by Ansible — do not edit manually
+# Role: etcd | Template: etcd.service.j2
+
+[Unit]
+Description=etcd key-value store
+Documentation=https://etcd.io/docs/
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User={{ etcd_user }}
+Group={{ etcd_group }}
+ExecStart={{ etcd_install_dir }}/etcd --config-file {{ etcd_config_dir }}/etcd.conf
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+LimitNPROC=65536
+# Extend start timeout to allow quorum formation across all 3 nodes.
+# Default 90s is too short when Ansible starts all nodes at the same time
+# and network round-trips add latency. 0 = no timeout (wait indefinitely).
+TimeoutStartSec=180
+# Load optional environment overrides (ETCDCTL_API=3, etc.)
+EnvironmentFile=-{{ etcd_config_dir }}/etcd.env
+
+# Prevent core dumps leaking cluster token
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

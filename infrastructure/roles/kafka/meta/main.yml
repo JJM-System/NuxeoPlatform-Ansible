@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: kafka
+  description: "Apache Kafka message broker for Nuxeo Stream processing"
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+
+dependencies: []

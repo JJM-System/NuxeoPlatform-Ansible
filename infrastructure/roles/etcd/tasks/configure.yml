@@ -1,0 +1,50 @@
+---
+# Open etcd ports in UFW BEFORE starting the service.
+# Without these rules the UFW default-deny policy blocks inter-node
+# peer traffic on port 2380 → nodes can never form quorum →
+# Type=notify never sends READY=1 → systemd timeout after 90s.
+
+# Port 2379 — etcd client API (used by Patroni and etcdctl)
+- name: configure | ufw — allow etcd client port {{ etcd_client_port }}
+  community.general.ufw:
+    rule: allow
+    port: "{{ etcd_client_port | string }}"
+    proto: tcp
+    comment: "etcd client"
+  when: ufw_enabled | default(true) | bool
+  tags: [etcd, configure]
+
+# Port 2380 — etcd peer communication (leader election, log replication)
+- name: configure | ufw — allow etcd peer port {{ etcd_peer_port }}
+  community.general.ufw:
+    rule: allow
+    port: "{{ etcd_peer_port | string }}"
+    proto: tcp
+    comment: "etcd peer"
+  when: ufw_enabled | default(true) | bool
+  tags: [etcd, configure]
+
+# Renders the per-node etcd config. The initial-cluster value is built
+# dynamically from hostvars so it always lists all 3 db_nodes.
+# On config change the 'restart etcd' handler fires at end of play.
+- name: configure | deploy /etc/etcd/etcd.conf
+  ansible.builtin.template:
+    src: etcd.conf.j2
+    dest: "{{ etcd_config_dir }}/etcd.conf"
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: "0640"
+    backup: true
+    validate: >-
+      /bin/bash -c "grep -q 'name:' %s"
+  notify: restart etcd
+  tags: [etcd, configure]
+
+# Start (or ensure running) the etcd service now that etcd.conf exists
+# and UFW ports are open. All 3 nodes reach this task simultaneously
+# (serial: "100%") so they can elect a leader and reach quorum quickly.
+- name: configure | start etcd service
+  ansible.builtin.systemd:
+    name: etcd
+    state: started
+  tags: [etcd, configure]

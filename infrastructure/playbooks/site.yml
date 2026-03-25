@@ -1,0 +1,99 @@
+---
+# Master provisioning playbook — full stack, ordered by dependency
+# Usage:
+#   ansible-playbook playbooks/site.yml -i inventories/local/hosts.ini
+#   ansible-playbook playbooks/site.yml -i inventories/local/hosts.ini --tags etcd
+#   ansible-playbook playbooks/site.yml -i inventories/local/hosts.ini --limit node1
+
+# ── Play 1: OS baseline on ALL nodes ─────────────────────────────────────────
+- hosts: all_nodes
+  gather_facts: true
+  become: true
+  tags: [common]
+  roles:
+    - role: common
+
+# ── Play 2: etcd cluster (db_nodes) ──────────────────────────────────────────
+# serial: "100%" = all 3 nodes run simultaneously. Required for initial
+# bootstrap: etcd (Type=notify) only sends READY after reaching quorum (2/3).
+# With serial:1 node1 would wait forever for node2/3 which haven't started yet.
+# For rolling restarts use update.yml which overrides serial per component.
+- hosts: db_nodes
+  gather_facts: false
+  become: true
+  serial: "100%"
+  tags: [etcd]
+  roles:
+    - role: etcd
+
+# ── Play 3: PostgreSQL + Patroni (db_nodes) ───────────────────────────────────
+# serial: "100%" = all 3 db_nodes run simultaneously. Required for initial
+# Patroni bootstrap: all nodes must race to etcd at the same time so one can win
+# the leader election. With serial:1 the first node would timeout waiting for
+# the other two to join the etcd quorum before Patroni can elect a leader.
+- hosts: db_nodes
+  gather_facts: true
+  become: true
+  serial: "100%"
+  tags: [postgresql]
+  roles:
+    - role: postgresql
+
+# ── Play 4: Elasticsearch (db_nodes) — serial=1 for cluster safety ───────────
+- hosts: db_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  tags: [elasticsearch]
+  roles:
+    - role: elasticsearch
+
+# ── Play 5: Kafka (db_nodes) — serial=1 ──────────────────────────────────────
+- hosts: db_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  tags: [kafka]
+  roles:
+    - role: kafka
+
+# ── Play 6: MinIO (app_nodes) ─────────────────────────────────────────────────
+- hosts: app_nodes
+  gather_facts: false
+  become: true
+  tags: [minio]
+  roles:
+    - role: minio
+
+# ── Play 7: Nuxeo (app_nodes) — 50% rolling ──────────────────────────────────
+- hosts: app_nodes
+  gather_facts: false
+  become: true
+  serial: "50%"
+  tags: [nuxeo]
+  roles:
+    - role: nuxeo
+
+# ── Play 8: HAProxy (app_nodes) ───────────────────────────────────────────────
+- hosts: app_nodes
+  gather_facts: false
+  become: true
+  tags: [haproxy]
+  roles:
+    - role: haproxy
+
+# ── Play 9: Keepalived (app_nodes) ────────────────────────────────────────────
+- hosts: app_nodes
+  gather_facts: false
+  become: true
+  tags: [keepalived]
+  roles:
+    - role: keepalived
+
+# ── Play 10: Monitoring stack (node5 only) ────────────────────────────────────
+- hosts: node5
+  gather_facts: false
+  become: true
+  tags: [monitoring]
+  roles:
+    - role: monitoring

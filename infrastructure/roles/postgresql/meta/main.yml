@@ -1,0 +1,24 @@
+---
+galaxy_info:
+  role_name: postgresql
+  author: ops-team
+  description: >
+    PostgreSQL 16 with Patroni HA manager on a 3-node cluster.
+    etcd is used as the DCS (distributed configuration store) for leader
+    election. Nuxeo application database is created after bootstrap.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble  # 24.04 LTS
+  galaxy_tags:
+    - postgresql
+    - patroni
+    - ha
+    - database
+    - nuxeo
+
+dependencies:
+  - role: common
+  - role: etcd

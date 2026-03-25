@@ -1,0 +1,16 @@
+---
+# Restart Patroni (and therefore PostgreSQL managed by it).
+# Patroni performs a graceful restart: it demotes a primary to replica first
+# if needed, so restarting on a leader triggers a controlled failover.
+- name: restart patroni
+  ansible.builtin.systemd:
+    name: patroni
+    state: restarted
+    daemon_reload: true
+
+# Reload Patroni config without restarting the PostgreSQL process.
+# Used when only patroni.yml parameters change (not postgresql parameters).
+- name: reload patroni
+  ansible.builtin.systemd:
+    name: patroni
+    state: reloaded

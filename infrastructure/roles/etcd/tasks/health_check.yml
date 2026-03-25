@@ -1,0 +1,64 @@
+---
+- name: health_check | wait for etcd client port {{ etcd_client_port }}
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ etcd_client_port }}"
+    timeout: 30
+    state: started
+  tags: [etcd, health_check, health_check_etcd]
+
+- name: health_check | etcdctl endpoint health --cluster
+  ansible.builtin.command:
+    cmd: >-
+      {{ etcd_install_dir }}/etcdctl
+      endpoint health
+      --cluster
+      --endpoints=http://127.0.0.1:{{ etcd_client_port }}
+  environment:
+    ETCDCTL_API: "3"
+  register: _etcd_health
+  changed_when: false
+  failed_when: >-
+    _etcd_health.rc != 0 or
+    'unhealthy' in _etcd_health.stdout
+  # Run only on the first db_node to avoid duplicate cluster-wide calls
+  run_once: true
+  tags: [etcd, health_check, health_check_etcd]
+
+- name: health_check | show endpoint health output
+  ansible.builtin.debug:
+    msg: "{{ _etcd_health.stdout_lines }}"
+  run_once: true
+  tags: [etcd, health_check, health_check_etcd]
+
+- name: health_check | etcdctl member list
+  ansible.builtin.command:
+    cmd: >-
+      {{ etcd_install_dir }}/etcdctl
+      member list
+      --endpoints=http://127.0.0.1:{{ etcd_client_port }}
+  environment:
+    ETCDCTL_API: "3"
+  register: _etcd_members
+  changed_when: false
+  failed_when: _etcd_members.rc != 0
+  run_once: true
+  tags: [etcd, health_check, health_check_etcd]
+
+- name: health_check | assert exactly 3 cluster members are listed
+  ansible.builtin.assert:
+    that:
+      - "_etcd_members.stdout_lines | length == 3"
+    fail_msg: >-
+      Expected 3 etcd members, found
+      {{ _etcd_members.stdout_lines | length }}.
+      Output: {{ _etcd_members.stdout }}
+    success_msg: "etcd cluster has 3 members — OK"
+  run_once: true
+  tags: [etcd, health_check, health_check_etcd]
+
+- name: health_check | show member list
+  ansible.builtin.debug:
+    msg: "{{ _etcd_members.stdout_lines }}"
+  run_once: true
+  tags: [etcd, health_check, health_check_etcd]

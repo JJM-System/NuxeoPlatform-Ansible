@@ -1,0 +1,6 @@
+# Managed by Ansible — do not edit manually
+# Role: common | Template: limits.conf.j2
+
+{% for limit in system_limits %}
+{{ limit.domain }}  {{ limit.type }}  {{ limit.item }}  {{ limit.value }}
+{% endfor %}

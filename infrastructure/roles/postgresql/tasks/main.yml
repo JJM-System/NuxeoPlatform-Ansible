@@ -1,0 +1,18 @@
+---
+# Entry point for the postgresql role.
+# Execution order matters:
+#   install     — apt packages, pip Patroni, system user/dirs
+#   configure   — patroni.yml + pg_hba template, UFW rules
+#   health_check — assert cluster has 1 leader and 2 replicas
+
+- name: postgresql | install
+  ansible.builtin.import_tasks: install.yml
+  tags: [postgresql, install]
+
+- name: postgresql | configure
+  ansible.builtin.import_tasks: configure.yml
+  tags: [postgresql, configure]
+
+- name: postgresql | health_check
+  ansible.builtin.import_tasks: health_check.yml
+  tags: [postgresql, health_check]

@@ -1,0 +1,94 @@
+---
+# Query the Patroni REST API on each node to confirm it is reporting a
+# healthy state. /health returns HTTP 200 only when Patroni considers the
+# local PostgreSQL instance fully operational.
+- name: health_check | query Patroni /health endpoint on each node
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ patroni_restapi_port }}/health"
+    method: GET
+    status_code: 200
+    timeout: 10
+    return_content: true
+  register: _patroni_health
+  changed_when: false
+  tags: [postgresql, health_check, health_check_postgresql]
+
+- name: health_check | show Patroni health response
+  ansible.builtin.debug:
+    msg: "{{ _patroni_health.json }}"
+  tags: [postgresql, health_check, health_check_postgresql]
+
+# Run patronictl list to get a cluster-wide view. run_once avoids running
+# this redundantly on all 3 nodes since it queries etcd for the full picture.
+- name: health_check | patronictl list — show cluster state
+  ansible.builtin.command:
+    cmd: "{{ patroni_venv_dir }}/bin/patronictl -c {{ patroni_config_dir }}/patroni.yml list"
+  register: _patronictl_list
+  changed_when: false
+  failed_when: _patronictl_list.rc != 0
+  run_once: true
+  tags: [postgresql, health_check, health_check_postgresql]
+
+- name: health_check | show patronictl list output
+  ansible.builtin.debug:
+    msg: "{{ _patronictl_list.stdout_lines }}"
+  run_once: true
+  tags: [postgresql, health_check, health_check_postgresql]
+
+# Assert there is exactly 1 Leader in the cluster. If Patroni cannot reach
+# quorum or etcd is unhealthy, no leader will be elected and this will fail.
+- name: health_check | assert cluster has exactly 1 Leader
+  ansible.builtin.assert:
+    that:
+      - "_patronictl_list.stdout | regex_findall('Leader') | length == 1"
+    fail_msg: >-
+      No Patroni leader found — cluster may still be bootstrapping or
+      etcd is unreachable. Output: {{ _patronictl_list.stdout }}
+    success_msg: "Patroni cluster has 1 leader — OK"
+  run_once: true
+  tags: [postgresql, health_check, health_check_postgresql]
+
+# Assert the expected number of cluster members (1 leader + 2 replicas = 3).
+# Leader state = "running", replica state = "streaming" — both are healthy.
+- name: health_check | assert cluster has 3 members
+  ansible.builtin.assert:
+    that:
+      - "_patronictl_list.stdout_lines | select('match', '.*(running|streaming).*') | list | length == 3"
+    fail_msg: >-
+      Expected 3 members (running or streaming), found fewer.
+      Output: {{ _patronictl_list.stdout }}
+    success_msg: "All 3 Patroni members running/streaming — OK"
+  run_once: true
+  tags: [postgresql, health_check, health_check_postgresql]
+
+# Verify the Nuxeo database exists — run on whichever node is the primary.
+- name: health_check | check if this node is the Patroni primary
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ patroni_restapi_port }}/primary"
+    method: GET
+    status_code: [200, 503]
+    timeout: 5
+    return_content: false
+  register: _hc_is_primary
+  changed_when: false
+  tags: [postgresql, health_check, health_check_postgresql]
+
+- name: health_check | verify Nuxeo database exists
+  ansible.builtin.command:
+    cmd: >-
+      psql -h 127.0.0.1 -p {{ postgresql_port }}
+      -U {{ postgresql_superuser }}
+      -tAc "SELECT 1 FROM pg_database WHERE datname='{{ postgresql_nuxeo_db }}'"
+  environment:
+    PGPASSWORD: "{{ vault_postgresql_password }}"
+  register: _pg_nuxeo_db
+  changed_when: false
+  failed_when: _pg_nuxeo_db.stdout | trim != '1'
+  when: _hc_is_primary.status == 200
+  tags: [postgresql, health_check, health_check_postgresql]
+
+- name: health_check | Nuxeo database confirmed
+  ansible.builtin.debug:
+    msg: "Database '{{ postgresql_nuxeo_db }}' exists on primary — OK"
+  when: _hc_is_primary.status == 200
+  tags: [postgresql, health_check, health_check_postgresql]

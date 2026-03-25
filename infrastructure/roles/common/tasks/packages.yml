@@ -1,0 +1,66 @@
+---
+# Refreshes the apt package index. cache_valid_time=3600 means the cache is
+# only re-fetched if it is older than 1 hour, keeping runs fast and idempotent.
+- name: packages | update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [common, packages]
+
+# Installs the full list of base packages defined in common_packages (defaults/main.yml).
+# These are tools needed on every node regardless of role (curl, git, jq, etc.).
+- name: packages | install common packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+  tags: [common, packages]
+
+# Sets the system timezone using the community.general.timezone module,
+# which updates /etc/localtime and /etc/timezone atomically.
+# Controlled by the 'timezone' variable (default: Europe/Warsaw).
+- name: packages | set timezone to {{ timezone }}
+  community.general.timezone:
+    name: "{{ timezone }}"
+  tags: [common, packages]
+
+# Removes the unattended-upgrades package entirely (purge=true also removes
+# its config files). On production servers managed by Ansible, automatic OS
+# updates are undesirable because they can restart services at unexpected times
+# or introduce untested package versions mid-cluster.
+- name: packages | remove unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: absent
+    purge: true
+  when: disable_unattended_upgrades | bool
+  tags: [common, packages]
+
+# Writes /etc/apt/apt.conf.d/20auto-upgrades with all periodic actions set to 0.
+# This disables background apt timers even if the package is reinstalled later.
+# Acts as a belt-and-suspenders complement to the package removal above.
+- name: packages | disable apt automatic updates
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "0";
+      APT::Periodic::Unattended-Upgrade "0";
+      APT::Periodic::Download-Upgradeable-Packages "0";
+      APT::Periodic::AutocleanInterval "0";
+    owner: root
+    group: root
+    mode: "0644"
+  when: disable_unattended_upgrades | bool
+  tags: [common, packages]
+
+# Deploys /etc/security/limits.d/99-ansible.conf from the limits.conf.j2 template.
+# Raises open file (nofile) and process (nproc) limits system-wide.
+# Elasticsearch, Kafka, and Nuxeo all require high nofile limits (>=65535)
+# and will refuse to start or degrade silently if these are too low.
+- name: packages | set system-wide file descriptor limits
+  ansible.builtin.template:
+    src: limits.conf.j2
+    dest: /etc/security/limits.d/99-ansible.conf
+    owner: root
+    group: root
+    mode: "0644"
+  tags: [common, packages]

@@ -1,0 +1,102 @@
+---
+# ── PostgreSQL ─────────────────────────────────────────────────────────────────
+# (str) PostgreSQL major version — must match the apt package name
+postgresql_version: "16"
+
+# (bool) When true, adds the official PGDG apt repository before installing
+# PostgreSQL. Set to false when the distro ships the required version natively
+# (e.g. Ubuntu 25.04 ships PG17, so PGDG is not needed).
+postgresql_use_pgdg: true
+
+# (str) Ubuntu codename used to build the PGDG apt repo URL.
+# Only used when postgresql_use_pgdg is true.
+postgresql_pgdg_codename: "{{ ansible_distribution_release }}"
+
+# (str) OS user and group created by the postgresql apt package
+postgresql_user: postgres
+postgresql_group: postgres
+
+# (str) Data directory managed by Patroni (Patroni owns this, not initdb)
+postgresql_data_dir: "/var/lib/postgresql/{{ postgresql_version }}/main"
+
+# (str) Directory for postgresql.conf, pg_hba.conf, pg_ident.conf
+postgresql_config_dir: "/etc/postgresql/{{ postgresql_version }}/main"
+
+# (str) Runtime directory for PID file and unix socket
+postgresql_run_dir: /var/run/postgresql
+
+# (str) PostgreSQL superuser name used by Patroni and Nuxeo
+postgresql_superuser: postgres
+
+# (str) Replication user created during Patroni bootstrap
+postgresql_replication_user: replicator
+
+# (str) Application database and user created for Nuxeo after cluster is up
+postgresql_nuxeo_db: nuxeo
+postgresql_nuxeo_user: nuxeo
+
+# Passwords come from vault — never set defaults for secrets
+# vault_postgresql_password          — postgres superuser password
+# vault_postgresql_replication_password — replicator user password
+# vault_nuxeo_db_password            — nuxeo application user password
+
+# ── PostgreSQL tuning ──────────────────────────────────────────────────────────
+# (str) Max connections — Patroni reserves a few for itself; Nuxeo uses pools
+postgresql_max_connections: "100"
+# (str) Shared buffers — rule of thumb: 25% of RAM (Vagrant: 1GB of 4GB)
+postgresql_shared_buffers: "256MB"
+# (str) Effective cache size hint for query planner (~50-75% of RAM)
+postgresql_effective_cache_size: "1GB"
+# (str) Memory for sort/hash operations per query
+postgresql_work_mem: "4MB"
+# (str) Memory for maintenance operations (VACUUM, CREATE INDEX)
+postgresql_maintenance_work_mem: "64MB"
+# (str) WAL level — logical required for replication and Debezium CDC
+postgresql_wal_level: "replica"
+# (int) Max WAL senders — must be > number of replicas
+postgresql_max_wal_senders: 10
+# (int) Max replication slots
+postgresql_max_replication_slots: 10
+# (str) Synchronous commit — off improves write throughput in Vagrant
+postgresql_synchronous_commit: "off"
+
+# ── Patroni ────────────────────────────────────────────────────────────────────
+# (str) Patroni cluster name — must match across all db_nodes
+# Override in group_vars/db_nodes.yml
+patroni_scope: "nuxeo-patroni"
+
+# (str) Directory for patroni.yml config file
+patroni_config_dir: /etc/patroni
+
+# (str) Patroni log directory
+patroni_log_dir: /var/log/patroni
+
+# (str) Patroni REST API listen address and port
+patroni_restapi_listen: "0.0.0.0"
+patroni_restapi_port: 8008
+
+# (str) Patroni pip package version
+patroni_version: "3.3.2"
+
+# (str) Python virtual environment directory for Patroni.
+# Using a venv avoids PEP 668 enforcement on Ubuntu 24.10+ which blocks
+# system-wide pip installs. The patroni binary path is venv/bin/patroni.
+patroni_venv_dir: /opt/patroni
+
+# (list) Packages installed into the Patroni venv via pip
+patroni_pip_packages:
+  - "patroni[etcd3]=={{ patroni_version }}"
+  - "psycopg2-binary"
+
+# (int) TTL for the Patroni leader lock in etcd (seconds)
+patroni_ttl: 30
+# (int) How often Patroni refreshes the leader lock (seconds)
+patroni_loop_wait: 10
+# (int) Retry timeout for DCS operations (seconds)
+patroni_retry_timeout: 10
+# (int) Maximum lag a replica can have and still be considered for failover (bytes)
+patroni_maximum_lag_on_failover: 1048576
+
+# ── Firewall ───────────────────────────────────────────────────────────────────
+# (bool) Open postgresql_port and patroni_restapi_port in UFW
+postgresql_ufw_enabled: true

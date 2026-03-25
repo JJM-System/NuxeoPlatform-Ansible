@@ -1,0 +1,53 @@
+---
+# ── Environment ────────────────────────────────────────────────────────────────
+env: production
+cluster_name: nuxeo-cluster-prod
+ansible_python_interpreter: /usr/bin/python3
+
+# ── Time ───────────────────────────────────────────────────────────────────────
+timezone: Europe/Warsaw
+ntp_servers:
+  - 0.pool.ntp.org
+  - 1.pool.ntp.org
+
+# ── Base packages ──────────────────────────────────────────────────────────────
+common_packages:
+  - curl
+  - wget
+  - vim
+  - git
+  - htop
+  - net-tools
+  - unzip
+  - tar
+  - gnupg2
+  - ca-certificates
+  - lsb-release
+  - apt-transport-https
+
+# ── Java ───────────────────────────────────────────────────────────────────────
+java_version: "21"
+java_package: openjdk-21-jdk
+
+# ── Network / VIPs ─────────────────────────────────────────────────────────────
+virtual_ip: 10.0.0.10    # HAProxy / Keepalived VIP (app tier)
+db_vip: 10.0.0.1         # Patroni leader VIP (managed by Patroni + etcd)
+
+# ── Service ports ──────────────────────────────────────────────────────────────
+elasticsearch_port: 9200
+elasticsearch_transport_port: 9300
+kafka_port: 9092
+kafka_jmx_port: 9101
+postgresql_port: 5432
+minio_port: 9000
+minio_console_port: 9001
+nuxeo_port: 8080
+nuxeo_management_port: 9090
+haproxy_stats_port: 8404
+etcd_client_port: 2379
+etcd_peer_port: 2380
+patroni_restapi_port: 8008
+prometheus_port: 9091
+prometheus_node_exporter_port: 9100
+grafana_port: 3000
+keepalived_check_port: 9200   # reuses ES port for VRRP check script

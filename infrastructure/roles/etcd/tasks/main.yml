@@ -1,0 +1,12 @@
+---
+- name: etcd | install
+  ansible.builtin.import_tasks: install.yml
+  tags: [etcd, install]
+
+- name: etcd | configure
+  ansible.builtin.import_tasks: configure.yml
+  tags: [etcd, configure]
+
+- name: etcd | health_check
+  ansible.builtin.import_tasks: health_check.yml
+  tags: [etcd, health_check]

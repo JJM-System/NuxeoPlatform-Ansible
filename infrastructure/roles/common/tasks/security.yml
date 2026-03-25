@@ -1,0 +1,86 @@
+---
+# Write SSH hardening settings to /etc/ssh/sshd_config.d/10-ansible-hardening.conf.
+# Ubuntu 22.04+ includes /etc/ssh/sshd_config.d/*.conf at the top of sshd_config,
+# with first-match-wins semantics. The 10- prefix ensures our file is processed
+# before cloud-init's 50-cloud-init.conf (which may set PasswordAuthentication yes),
+# so our stricter settings take precedence. Using a drop-in avoids touching the
+# distro-managed /etc/ssh/sshd_config file directly.
+- name: security | deploy SSH hardening drop-in config
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-ansible-hardening.conf
+    owner: root
+    group: root
+    mode: "0600"
+    validate: /usr/sbin/sshd -t -f %s
+    content: |
+      # Managed by Ansible — do not edit manually
+      # Role: common | Task: security
+      PasswordAuthentication {{ 'no' if ssh_disable_password_auth | bool else 'yes' }}
+      PermitRootLogin {{ 'no' if ssh_disable_root_login | bool else 'yes' }}
+  notify: restart sshd
+  tags: [common, security]
+
+# Installs the UFW (Uncomplicated Firewall) package. UFW is a frontend to
+# iptables/nftables that provides a simple rule syntax used by the tasks below.
+- name: security | install ufw
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+  when: ufw_enabled | bool
+  tags: [common, security, ufw]
+
+# Sets the default policy for all inbound traffic to DENY.
+# Any port not explicitly allowed below will be blocked.
+- name: security | ufw — default deny incoming
+  community.general.ufw:
+    default: deny
+    direction: incoming
+  when: ufw_enabled | bool
+  notify: reload ufw
+  tags: [common, security, ufw]
+
+# Allows all outbound traffic. Nodes need to reach package repositories,
+# NTP servers, GitHub (for etcd binary), and each other.
+- name: security | ufw — default allow outgoing
+  community.general.ufw:
+    default: allow
+    direction: outgoing
+  when: ufw_enabled | bool
+  notify: reload ufw
+  tags: [common, security, ufw]
+
+# Opens the SSH port (default 22) so Ansible itself does not get locked out
+# after UFW is enabled. This rule is always applied first, before enabling
+# the firewall, to prevent a race condition that could cut the connection.
+- name: security | ufw — allow SSH (port {{ ssh_port }})
+  community.general.ufw:
+    rule: allow
+    port: "{{ ssh_port | string }}"
+    proto: tcp
+    comment: "SSH"
+  when: ufw_enabled | bool
+  notify: reload ufw
+  tags: [common, security, ufw]
+
+# Iterates over ufw_allow_ports (default: empty list) to open any service-
+# specific ports required on this node. Populated per role in group_vars
+# or overridden at play level. Each item must have 'port'; 'proto' and
+# 'comment' are optional (default: tcp, empty string).
+- name: security | ufw — allow extra ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto | default('tcp') }}"
+    comment: "{{ item.comment | default('') }}"
+  loop: "{{ ufw_allow_ports }}"
+  when: ufw_enabled | bool
+  notify: reload ufw
+  tags: [common, security, ufw]
+
+# Activates the firewall with all rules applied above.
+# UFW persists across reboots automatically once enabled.
+- name: security | ufw — enable firewall
+  community.general.ufw:
+    state: enabled
+  when: ufw_enabled | bool
+  tags: [common, security, ufw]

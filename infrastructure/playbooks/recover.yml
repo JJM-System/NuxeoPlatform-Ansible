@@ -1,0 +1,92 @@
+---
+# Node recovery playbook — reprovision a failed node into a running cluster
+#
+# Usage:
+#   # Recover a failed db_node (e.g. node2):
+#   ansible-playbook playbooks/recover.yml \
+#     -i inventories/local/hosts.ini \
+#     --limit node2 \
+#     --tags db_recovery
+#
+#   # Recover a failed app_node (e.g. node4):
+#   ansible-playbook playbooks/recover.yml \
+#     -i inventories/local/hosts.ini \
+#     --limit node4 \
+#     --tags app_recovery
+
+# ── Step 1: Gather facts on ALL surviving nodes first ────────────────────────
+# This populates hostvars so etcd/Patroni peer URLs resolve correctly
+- hosts: all_nodes
+  gather_facts: true
+  become: false
+  tags: [always]
+  tasks:
+    - name: recover | gather facts on all nodes
+      ansible.builtin.setup:
+        gather_subset: [network, virtual]
+
+# ── Step 2: DB node recovery ──────────────────────────────────────────────────
+- hosts: db_nodes
+  gather_facts: false
+  become: true
+  tags: [db_recovery]
+  tasks:
+    - name: recover | check etcd quorum on surviving db_nodes
+      ansible.builtin.command:
+        cmd: >-
+          etcdctl member list
+          --endpoints=http://127.0.0.1:2379
+      environment:
+        ETCDCTL_API: "3"
+      register: _etcd_members
+      changed_when: false
+      failed_when: _etcd_members.rc != 0
+      # Run once on a node that is NOT the one being recovered
+      run_once: true
+      when: inventory_hostname != (ansible_limit | default(''))
+      tags: [db_recovery, etcd]
+
+    - name: recover | assert etcd has at least 2 healthy members (quorum)
+      ansible.builtin.assert:
+        that:
+          - "_etcd_members.stdout_lines | length >= 2"
+        fail_msg: >-
+          etcd quorum lost — only {{ _etcd_members.stdout_lines | length }}
+          member(s) reachable. Resolve etcd before recovering this node.
+        success_msg: "etcd quorum OK ({{ _etcd_members.stdout_lines | length }} members)"
+      run_once: true
+      when:
+        - _etcd_members is defined
+        - inventory_hostname != (ansible_limit | default(''))
+      tags: [db_recovery, etcd]
+
+  roles:
+    - role: common
+      tags: [common]
+    - role: etcd
+      vars:
+        etcd_initial_cluster_state: existing
+      tags: [etcd]
+    - role: postgresql
+      tags: [postgresql]
+    - role: elasticsearch
+      tags: [elasticsearch]
+    - role: kafka
+      tags: [kafka]
+
+# ── Step 3: App node recovery ─────────────────────────────────────────────────
+- hosts: app_nodes
+  gather_facts: false
+  become: true
+  tags: [app_recovery]
+  roles:
+    - role: common
+      tags: [common]
+    - role: minio
+      tags: [minio]
+    - role: nuxeo
+      tags: [nuxeo]
+    - role: haproxy
+      tags: [haproxy]
+    - role: keepalived
+      tags: [keepalived]

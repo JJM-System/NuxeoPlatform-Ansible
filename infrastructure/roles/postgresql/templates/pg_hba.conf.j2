@@ -1,0 +1,27 @@
+# Managed by Ansible — do not edit manually
+# Role: postgresql | Template: pg_hba.conf.j2
+# PostgreSQL client authentication configuration
+# TYPE  DATABASE        USER                    ADDRESS                 METHOD
+
+# Local socket connections — used by Patroni and psql for admin tasks
+local   all             {{ postgresql_superuser }}                      peer
+local   all             all                                             md5
+local   replication     all                                             peer
+
+# IPv4 loopback — used by health checks and local psql
+host    all             all             127.0.0.1/32                    md5
+host    replication     all             127.0.0.1/32                    md5
+
+# Replication connections from db_nodes cluster peers
+{% for host in groups['db_nodes'] %}
+host    replication     {{ postgresql_replication_user }}   {{ hostvars[host]['ansible_host'] }}/32    md5
+{% endfor %}
+
+# Application connections from app_nodes (Nuxeo)
+{% for host in groups['app_nodes'] %}
+host    {{ postgresql_nuxeo_db }}   {{ postgresql_nuxeo_user }}   {{ hostvars[host]['ansible_host'] }}/32    md5
+{% endfor %}
+
+# Allow all hosts in the cluster subnet (covers VIPs and future nodes)
+host    all             all             192.168.56.0/24                 md5
+host    all             all             10.0.0.0/8                      md5

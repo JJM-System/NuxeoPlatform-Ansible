@@ -1,0 +1,44 @@
+---
+# Entry point for the common role.
+# Tasks are split into focused sub-files and imported in dependency order:
+#   packages  → sysctl → security → java → ntp → users
+# Import (not include) is used so that tags defined here are inherited correctly.
+
+# Installs base OS packages, sets timezone, disables unattended-upgrades,
+# and deploys system-wide file descriptor limits (ulimits).
+- name: common | packages
+  ansible.builtin.import_tasks: packages.yml
+  tags: [common, packages]
+
+# Applies kernel tuning parameters required by Elasticsearch (vm.max_map_count),
+# Kafka/Nuxeo (fs.file-max, somaxconn) and network hardening (tcp_max_syn_backlog).
+# All values are persisted to /etc/sysctl.d/99-ansible.conf.
+- name: common | sysctl
+  ansible.builtin.import_tasks: sysctl.yml
+  tags: [common, sysctl]
+
+# Hardens the SSH daemon (disables password auth and root login) and
+# configures UFW firewall with default-deny-incoming policy, allowing only
+# SSH and any extra ports defined in ufw_allow_ports.
+- name: common | security
+  ansible.builtin.import_tasks: security.yml
+  tags: [common, security]
+
+# Installs OpenJDK (version controlled by java_package variable) and
+# sets JAVA_HOME permanently in /etc/environment so all sessions pick it up.
+# Required by Nuxeo, Elasticsearch, and Kafka.
+- name: common | java
+  ansible.builtin.import_tasks: java.yml
+  tags: [common, java]
+
+# Installs chrony NTP client, deploys a templated chrony.conf with the
+# configured pool servers, starts the service, and waits for clock sync.
+- name: common | ntp
+  ansible.builtin.import_tasks: ntp.yml
+  tags: [common, ntp]
+
+# Creates system users defined in system_users, grants passwordless sudo
+# where the group is 'sudo', and injects SSH authorized_keys.
+- name: common | users
+  ansible.builtin.import_tasks: users.yml
+  tags: [common, users]

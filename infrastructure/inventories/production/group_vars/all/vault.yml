@@ -1,0 +1,26 @@
+---
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │  UNENCRYPTED TEMPLATE — encrypt before committing:                          │
+# │    ansible-vault encrypt inventories/production/group_vars/all/vault.yml    │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+# PostgreSQL / Patroni
+vault_postgresql_password: "ChangeMePostgres123!"
+vault_postgresql_replication_password: "ChangeMeRepl123!"
+vault_patroni_restapi_password: "ChangeMePatroni123!"
+
+# MinIO
+vault_minio_root_user: "minioadmin"
+vault_minio_root_password: "ChangeMeMinio123!"
+
+# Nuxeo
+vault_nuxeo_db_password: "ChangeMeNuxeoDB123!"
+
+# Monitoring
+vault_grafana_admin_password: "ChangeMeGrafana123!"
+
+# etcd
+vault_etcd_initial_cluster_token: "etcd-cluster-prod-token"
+
+# Keepalived
+vault_keepalived_auth_pass: "ChangeMeVRRP123!"

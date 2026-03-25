@@ -1,0 +1,99 @@
+---
+# ── Packages ───────────────────────────────────────────────────────────────────
+# (list[str]) Base system packages installed on every node
+common_packages:
+  - curl
+  - wget
+  - vim
+  - git
+  - htop
+  - net-tools
+  - unzip
+  - tar
+  - gnupg2
+  - ca-certificates
+  - lsb-release
+  - python3-pip
+  - python3-apt
+  - acl               # required for Ansible unprivileged become
+  - rsync
+  - jq
+
+# (bool) Remove and disable unattended-upgrades on all managed nodes
+disable_unattended_upgrades: true
+
+# ── Java ───────────────────────────────────────────────────────────────────────
+# (str) OpenJDK major version to install
+java_version: "21"
+# (str) Exact apt package name
+java_package: "openjdk-21-jdk"
+# (str) JAVA_HOME path written to /etc/environment
+java_home: "/usr/lib/jvm/java-21-openjdk-amd64"
+
+# ── Time ───────────────────────────────────────────────────────────────────────
+# (str) System timezone (tzdata format)
+timezone: "Europe/Warsaw"
+# (list[str]) NTP servers written into chrony.conf
+ntp_servers:
+  - 0.pool.ntp.org
+  - 1.pool.ntp.org
+# (int) Maximum clock step chrony will correct in one jump (seconds)
+ntp_makestep_threshold: 1
+# (int) Number of clock updates after which makestep is allowed
+ntp_makestep_limit: 3
+
+# ── Kernel / sysctl ────────────────────────────────────────────────────────────
+# (int) Required by Elasticsearch for mmap virtual memory
+vm_max_map_count: 262144
+# (int) Maximum number of open file descriptors system-wide
+fs_file_max: 1000000
+# (int) Maximum socket listen backlog
+net_core_somaxconn: 65535
+# (int) Maximum TCP SYN backlog (anti SYN-flood)
+net_ipv4_tcp_max_syn_backlog: 65535
+# (bool) Disable IPv6 on all interfaces (set false to keep IPv6)
+net_disable_ipv6: false
+
+# ── System limits (ulimits) ────────────────────────────────────────────────────
+# Applied via /etc/security/limits.d/99-ansible.conf
+system_limits:
+  - domain: "*"
+    type: soft
+    item: nofile
+    value: 1000000
+  - domain: "*"
+    type: hard
+    item: nofile
+    value: 1000000
+  - domain: "*"
+    type: soft
+    item: nproc
+    value: 65535
+  - domain: "*"
+    type: hard
+    item: nproc
+    value: 65535
+
+# ── System users ───────────────────────────────────────────────────────────────
+# (list[dict]) Users to create on every node
+# Fields: name(str), groups(str), shell(str), authorized_keys(list[str])
+system_users:
+  - name: ansible
+    groups: sudo
+    shell: /bin/bash
+    authorized_keys: []   # populate via vault or host_vars
+
+# ── SSH ────────────────────────────────────────────────────────────────────────
+# (bool) Disable password authentication in sshd_config
+ssh_disable_password_auth: true
+# (bool) Disable root login over SSH
+ssh_disable_root_login: true
+# (int) SSH daemon listen port
+ssh_port: 22
+
+# ── UFW ────────────────────────────────────────────────────────────────────────
+# (bool) Enable UFW and apply rules
+ufw_enabled: true
+# (list[dict]) Additional ports to allow beyond SSH
+# Fields: port(str|int), proto(str), comment(str)
+ufw_allow_ports: []

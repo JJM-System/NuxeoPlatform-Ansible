@@ -1,0 +1,33 @@
+# Managed by Ansible — do not edit manually
+# Role: postgresql | Template: patroni.service.j2
+
+[Unit]
+Description=Patroni — PostgreSQL HA manager
+Documentation=https://patroni.readthedocs.io/
+After=syslog.target network.target etcd.service
+Wants=network-online.target
+Requires=etcd.service
+
+[Service]
+Type=simple
+User={{ postgresql_user }}
+Group={{ postgresql_group }}
+ExecStart={{ patroni_venv_dir }}/bin/patroni {{ patroni_config_dir }}/patroni.yml
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+TimeoutSec=30
+Restart=on-failure
+RestartSec=5s
+
+# Give Patroni time to perform a controlled failover before killing it
+TimeoutStopSec=120
+
+# Raise file descriptor limits — PostgreSQL needs many open files
+LimitNOFILE=65536
+LimitNPROC=65536
+
+StandardOutput=append:{{ patroni_log_dir }}/patroni.log
+StandardError=append:{{ patroni_log_dir }}/patroni.log
+
+[Install]
+WantedBy=multi-user.target

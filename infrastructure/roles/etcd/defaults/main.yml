@@ -1,0 +1,59 @@
+---
+# ── Version & installation ─────────────────────────────────────────────────────
+# (str) etcd release version to install from GitHub
+etcd_version: "3.5.13"
+
+# (str) Full URL to the official binary tarball
+etcd_download_url: "https://github.com/etcd-io/etcd/releases/download/v{{ etcd_version }}/etcd-v{{ etcd_version }}-linux-amd64.tar.gz"
+
+# (str) Directory where etcd and etcdctl binaries are placed
+etcd_install_dir: /usr/local/bin
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+# (str) Directory where etcd stores its WAL and snapshots
+etcd_data_dir: /var/lib/etcd
+
+# (str) Directory for etcd.conf and etcd.env
+etcd_config_dir: /etc/etcd
+
+# ── System user ────────────────────────────────────────────────────────────────
+# (str) System user that runs the etcd process
+etcd_user: etcd
+# (str) System group for the etcd user
+etcd_group: etcd
+
+# ── Networking ─────────────────────────────────────────────────────────────────
+# (int) Port for client (Patroni, etcdctl) connections
+etcd_client_port: 2379
+# (int) Port for inter-peer replication traffic
+etcd_peer_port: 2380
+
+# ── Cluster identity ───────────────────────────────────────────────────────────
+# (str) Human-readable cluster name (also used as part of peer URLs)
+# Override in group_vars/db_nodes.yml
+etcd_cluster_name: "{{ etcd_cluster_name | default('nuxeo-etcd-cluster') }}"
+
+# (str) "new" for initial bootstrap; "existing" when rejoining a running cluster
+etcd_initial_cluster_state: "new"
+
+# (str) Unique token that prevents accidental cross-cluster peer joins
+# Must come from vault: vault_etcd_initial_cluster_token
+etcd_initial_cluster_token: "{{ vault_etcd_initial_cluster_token }}"
+
+# ── Tuning ─────────────────────────────────────────────────────────────────────
+# (str) Compact revision history older than N hours (string, e.g. "1")
+etcd_auto_compaction_retention: "1"
+
+# (int) Number of committed transactions that trigger a snapshot to disk
+etcd_snapshot_count: 10000
+
+# (int) Time (ms) between leader heartbeats sent to followers
+etcd_heartbeat_interval: 100
+
+# (int) Time (ms) a follower waits before starting a new election
+# Must be at least 5× etcd_heartbeat_interval
+etcd_election_timeout: 1000
+
+# (int) Maximum backend database size in bytes before etcd raises a space alarm
+# 8 GB — Patroni + Nuxeo metadata never approaches this under normal operation
+etcd_quota_backend_bytes: 8589934592

@@ -1,0 +1,64 @@
+---
+# Installs the chrony NTP client. chrony is preferred over ntpd on modern Ubuntu
+# because it synchronizes faster after boot, handles VM clock drift better,
+# and is the default NTP implementation in Ubuntu 22.04.
+- name: ntp | install chrony
+  ansible.builtin.apt:
+    name: chrony
+    state: present
+  tags: [common, ntp]
+
+# Renders chrony.conf.j2 into /etc/chrony/chrony.conf using the ntp_servers
+# and makestep variables. backup: true keeps the previous version as .bak
+# so it can be restored manually if the new config has issues.
+# Notifies 'restart chrony' handler — restart is deferred to end of play.
+- name: ntp | deploy chrony.conf
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony/chrony.conf
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  notify: restart chrony
+  tags: [common, ntp]
+
+# Starts the chrony service and enables it to survive reboots.
+# If the handler fires (config changed), systemd will restart chrony after
+# this task, so the service is always in the correct state at end of play.
+- name: ntp | enable and start chronyd
+  ansible.builtin.service:
+    name: chrony
+    state: started
+    enabled: true
+  tags: [common, ntp]
+
+# Blocks until chrony has performed at least one successful clock correction
+# or until 30 seconds elapse. Arguments: max_tries=10, max_correction=0.1s,
+# max_skew=0.0 (ignored), timeout=30s.
+# This prevents downstream tasks that depend on accurate timestamps
+# (e.g. etcd TLS cert validation, Kafka log offsets) from running on a node
+# whose clock is still drifting wildly.
+- name: ntp | wait for chrony to synchronize (up to 30s)
+  ansible.builtin.command:
+    cmd: chronyc waitsync 10 0.1 0.0 30
+  register: _chrony_sync
+  changed_when: false
+  failed_when: _chrony_sync.rc != 0
+  tags: [common, ntp]
+
+# Runs 'chronyc tracking' and captures the output — shows reference source,
+# stratum, system time offset, and frequency error. Read-only, never a change.
+- name: ntp | verify chrony tracking
+  ansible.builtin.command:
+    cmd: chronyc tracking
+  register: _chrony_tracking
+  changed_when: false
+  tags: [common, ntp]
+
+# Prints the tracking output so the operator can see clock offset and
+# reference server without logging into each node individually.
+- name: ntp | show tracking info
+  ansible.builtin.debug:
+    msg: "{{ _chrony_tracking.stdout_lines }}"
+  tags: [common, ntp]

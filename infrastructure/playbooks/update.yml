@@ -1,0 +1,124 @@
+---
+# Rolling update playbook — updates services in dependency order without downtime
+# Usage:
+#   ansible-playbook playbooks/update.yml -i inventories/production/hosts.ini
+#   ansible-playbook playbooks/update.yml -i inventories/production/hosts.ini --tags nuxeo
+
+# ── OS baseline (all nodes, serial=1) ─────────────────────────────────────────
+- hosts: all_nodes
+  gather_facts: true
+  become: true
+  serial: 1
+  tags: [common]
+  pre_tasks:
+    - name: update | starting common OS update
+      ansible.builtin.debug:
+        msg: "Starting common rolling update on {{ inventory_hostname }}"
+  roles:
+    - role: common
+  post_tasks:
+    - name: update | common health check
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../roles/common/tasks/health_check.yml"
+      tags: [common, health_check]
+
+# ── etcd (db_nodes, serial=1) ─────────────────────────────────────────────────
+- hosts: db_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  tags: [etcd]
+  pre_tasks:
+    - name: update | starting etcd rolling update
+      ansible.builtin.debug:
+        msg: "Starting etcd rolling update on {{ inventory_hostname }}"
+  roles:
+    - role: etcd
+  post_tasks:
+    - name: update | etcd health check
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../roles/etcd/tasks/health_check.yml"
+      tags: [etcd, health_check]
+
+# ── PostgreSQL / Patroni (db_nodes, serial=1) ─────────────────────────────────
+- hosts: db_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  tags: [postgresql]
+  pre_tasks:
+    - name: update | starting postgresql rolling update
+      ansible.builtin.debug:
+        msg: "Starting postgresql rolling update on {{ inventory_hostname }}"
+  roles:
+    - role: postgresql
+  post_tasks:
+    - name: update | postgresql health check
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../roles/postgresql/tasks/health_check.yml"
+      tags: [postgresql, health_check]
+
+# ── Elasticsearch (db_nodes, serial=1) ────────────────────────────────────────
+- hosts: db_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  tags: [elasticsearch]
+  pre_tasks:
+    - name: update | starting elasticsearch rolling update
+      ansible.builtin.debug:
+        msg: "Starting elasticsearch rolling update on {{ inventory_hostname }}"
+  roles:
+    - role: elasticsearch
+  post_tasks:
+    - name: update | elasticsearch health check
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../roles/elasticsearch/tasks/health_check.yml"
+      tags: [elasticsearch, health_check]
+
+# ── Kafka (db_nodes, serial=1) ────────────────────────────────────────────────
+- hosts: db_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  tags: [kafka]
+  pre_tasks:
+    - name: update | starting kafka rolling update
+      ansible.builtin.debug:
+        msg: "Starting kafka rolling update on {{ inventory_hostname }}"
+  roles:
+    - role: kafka
+  post_tasks:
+    - name: update | kafka health check
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../roles/kafka/tasks/health_check.yml"
+      tags: [kafka, health_check]
+
+# ── Nuxeo (app_nodes, 50% rolling) ────────────────────────────────────────────
+- hosts: app_nodes
+  gather_facts: false
+  become: true
+  serial: "50%"
+  tags: [nuxeo]
+  pre_tasks:
+    - name: update | starting nuxeo rolling update
+      ansible.builtin.debug:
+        msg: "Starting nuxeo rolling update on {{ inventory_hostname }}"
+  roles:
+    - role: nuxeo
+  post_tasks:
+    - name: update | nuxeo health check
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../roles/nuxeo/tasks/health_check.yml"
+      tags: [nuxeo, health_check]
+
+# ── HAProxy (app_nodes) ───────────────────────────────────────────────────────
+- hosts: app_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  tags: [haproxy]
+  pre_tasks:
+    - name: update | starting haproxy rolling update
+      ansible.builtin.debug:
+        msg: "Starting haproxy rolling update on {{ inventory_hostname }}"
+  roles:
+    - role: haproxy
+  post_tasks:
+    - name: update | haproxy health check
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../roles/haproxy/tasks/health_check.yml"
+      tags: [haproxy, health_check]

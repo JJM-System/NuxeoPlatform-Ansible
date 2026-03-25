@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: common
+  author: ops-team
+  description: >
+    OS baseline for all Ubuntu 22.04 nodes: packages, sysctl, ulimits,
+    SSH hardening, UFW firewall, Java 21, chrony NTP, and system users.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy   # 22.04 LTS
+  galaxy_tags:
+    - system
+    - ubuntu
+    - hardening
+    - java
+    - ntp
+
+dependencies: []

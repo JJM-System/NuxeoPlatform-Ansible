@@ -1,0 +1,45 @@
+---
+# Installs the OpenJDK package specified by java_package (e.g. openjdk-21-jdk).
+# update_cache: false because packages.yml already refreshed the apt cache
+# earlier in the same play — no need to hit the repos again.
+- name: java | install {{ java_package }}
+  ansible.builtin.apt:
+    name: "{{ java_package }}"
+    state: present
+    update_cache: false
+  tags: [common, java]
+
+# Writes JAVA_HOME into /etc/environment so it is available system-wide
+# for all users and services, including those launched by systemd.
+# Uses lineinfile with regexp so re-running the task replaces the value
+# rather than appending a duplicate line.
+- name: java | set JAVA_HOME in /etc/environment
+  ansible.builtin.lineinfile:
+    path: /etc/environment
+    regexp: '^JAVA_HOME='
+    line: 'JAVA_HOME="{{ java_home }}"'
+    state: present
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  tags: [common, java]
+
+# Runs 'java -version' to confirm the binary is on PATH and exits cleanly.
+# changed_when: false marks this as a read-only check so it never appears
+# as a change in the Ansible output. Output is captured for the debug task below.
+# Java writes its version to stderr, not stdout — both are captured.
+- name: java | verify java binary is executable
+  ansible.builtin.command:
+    cmd: java -version
+  register: _java_version
+  changed_when: false
+  failed_when: _java_version.rc != 0
+  tags: [common, java]
+
+# Prints the installed Java version string to the Ansible output so the
+# operator can confirm the correct JDK was installed without SSHing in.
+- name: java | show installed java version
+  ansible.builtin.debug:
+    msg: "{{ _java_version.stderr | default(_java_version.stdout) }}"
+  tags: [common, java]

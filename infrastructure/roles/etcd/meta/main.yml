@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  role_name: etcd
+  author: ops-team
+  description: >
+    etcd 3.5 three-node cluster installed from GitHub binary releases,
+    used by Patroni for PostgreSQL HA leader election and consensus.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy   # 22.04 LTS
+  galaxy_tags:
+    - etcd
+    - distributed
+    - ha
+    - patroni
+    - cluster
+
+dependencies:
+  - role: common
